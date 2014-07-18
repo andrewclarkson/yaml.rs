@@ -1,0 +1,8 @@
+[package]
+name = "yaml"
+version = "0.0.0"
+authors = [ "Andrew Clarson <andrewclarkson.us@gmail.com>" ]
+
+[[lib]]
+name = "yaml"
+path = "src/lib.rs"
