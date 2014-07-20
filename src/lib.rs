@@ -2,6 +2,7 @@
 // yaml.rs
 // Nothing to see here yet
 //
+#![feature(macro_rules)]
 
 extern crate serialize;
 
@@ -27,19 +28,25 @@ pub enum Yaml {
 // in typical yaml terms this would be 'dump'
 //
 //
-pub fn encode<'writer, T: Encodable<YamlEncoder<'writer>, IoError>>(object: &T) -> String {
-    let buffer = YamlEncoder::buffer_encode(object);
-    String::from_utf8(buffer).unwrap()
+#[macro_export]
+macro_rules! encode {
+    ($obj:ident) => {
+        {
+            let mut writer = MemWriter::new(); 
+            {
+                let mut encoder = YamlEncoder::new(&mut writer);
+                $obj.encode(&mut encoder);
+            }
+            String::from_utf8(writer.unwrap()).unwrap()
+        }
+    }  
 }
 
 
 pub type EncodeResult = IoResult<()>;
 
-//
-//
-//
 struct YamlEncoder<'writer> {
-    writer: &'writer mut Writer,
+    writer: &'writer mut Writer
 }
 
 impl<'writer> YamlEncoder<'writer> {
@@ -50,19 +57,19 @@ impl<'writer> YamlEncoder<'writer> {
         }
     }
 
-    pub fn buffer_encode<T:Encodable<YamlEncoder<>, IoError>>(object: &T) -> Vec<u8> {
-        let mut writer = MemWriter::new();
-        {
-            let mut encoder = YamlEncoder::new(&mut writer as &mut Writer);
-            object.encode(&mut encoder);
-        }
-        writer.unwrap()
-    }
+    //pub fn buffer_encode<'writer, T:Encodable<YamlEncoder<'writer>, IoError>>(object: &T) -> Vec<u8> {
+    //    let writer = MemWriter::new();
+    //    {
+    //        let mut encoder = YamlEncoder::new(&mut writer as &mut Writer);
+    //        object.encode(&mut encoder);
+    //    }
+    //    writer.unwrap()
+    //}
     
 
 }
 
-impl<'writer> Encoder<IoError> for YamlEncoder<'writer> {
+impl <'writer>Encoder<IoError> for YamlEncoder<'writer> {
         // Primitive types:
     fn emit_nil(&mut self) -> EncodeResult {
         write!(self.writer, "null")
@@ -253,11 +260,17 @@ impl<'writer> Encoder<IoError> for YamlEncoder<'writer> {
 
 #[cfg(test)]
 mod tests {
+    
+    #![feature(phase)]
+    
     extern crate serialize;
 
     use std::string::String;
+    use std::io::MemWriter;
     use serialize::{Encodable, Encoder, Decodable, Decoder};
-    use super::{encode};
+    
+    #[phase(syntax)]
+    use super::{YamlEncoder};
 
 
     #[deriving(Encodable)]
@@ -268,13 +281,17 @@ mod tests {
 
     #[test]
     fn test_encode_null() {
-        
         let object: Option<String> = None;
-
-        let document = encode(&object);
-
+        let document = {
+            let mut writer = MemWriter::new();
+            {
+                let mut encoder = YamlEncoder::new(&mut writer as &mut Writer);
+                object.encode(&mut encoder);
+            }
+            String::from_utf8(writer.unwrap()).unwrap()
+        };
+            
         let expected = "null".to_string();
-
         assert_eq!(document, expected);
     }
 
