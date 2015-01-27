@@ -11,18 +11,33 @@ use std::option::Option;
 
 pub struct Scanner<'a> {
     reader: Box<Reader + 'a>,
+    done: bool,
 }
 
 impl <'a>Scanner<'a> {
     pub fn new<T: Reader + 'a>(reader: Box<T>) -> Scanner<'a> {
-        Scanner { reader: reader } 
+        Scanner { reader: reader, done: false } 
+    }
+
+    pub fn get_next_token(&mut self) -> Option<Token> {
+        loop {
+            match self.reader.read_byte() {
+                Err(error) => {
+                    self.done = true;
+                    return Some(Token::Eof);
+                },
+                Ok(byte) => {
+                    return Some(Token::Character);
+                }
+            }
+        }       
     }
 }
 
 #[derive(PartialEq, Copy, Show)]
 pub enum Token {
     Character,
-    Other,
+    Eof,
 }
 
 impl <'a>Iterator for Scanner<'a> {
@@ -30,7 +45,10 @@ impl <'a>Iterator for Scanner<'a> {
     type Item = Token;
 
     fn next(&mut self) -> Option<Token> {
-        Option::Some(Token::Character)
+        if self.done {
+            return None;
+        }
+        self.get_next_token()
     }
 }
 
@@ -47,8 +65,8 @@ mod test {
         let stream = "---";
         let mut reader = MemReader::new(stream.bytes().collect());
         let mut scanner = Scanner::new(Box::new(reader));
-        for token in scanner.take(5) {
-            assert!(token == Token::Character);           
-        }
+        let tokens: Vec<Token> = scanner.collect();
+        let expected = vec!(Token::Character, Token::Character, Token::Character, Token::Eof);
+        assert!(tokens == expected);
     }
 }
