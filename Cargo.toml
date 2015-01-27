@@ -3,6 +3,6 @@ name = "yaml"
 version = "0.0.0"
 authors = [ "Andrew Clarson <andrewclarkson.us@gmail.com>" ]
 
-[[lib]]
+[lib]
 name = "yaml"
 path = "src/lib.rs"
