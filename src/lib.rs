@@ -30,16 +30,21 @@ impl <'a>Scanner<'a> {
                 Token::Eof
             },
             Ok(byte) => {
-               Token::Character
+                match byte as char {
+                    '[' => Token::SequenceStart,
+                    _ => Token::Other
+                }
             }
         };
+
         Some(token)
     }
 }
 
 #[derive(PartialEq, Copy, Show)]
 pub enum Token {
-    Character,
+    SequenceStart,
+    Other, // A temporary addition for unimplemented tokens
     Eof,
 }
 
@@ -62,11 +67,11 @@ mod test {
 
     #[test]
     fn test_scanner() {
-        let stream = "---";
+        let stream = "[";
         let mut reader = MemReader::new(stream.bytes().collect());
         let mut scanner = Scanner::new(Box::new(reader));
         let tokens: Vec<Token> = scanner.collect();
-        let expected = vec!(Token::Character, Token::Character, Token::Character, Token::Eof);
+        let expected = vec!(Token::SequenceStart, Token::Eof);
         assert!(tokens == expected);
     }
 }
