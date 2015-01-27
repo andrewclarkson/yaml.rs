@@ -20,17 +20,20 @@ impl <'a>Scanner<'a> {
     }
 
     pub fn get_next_token(&mut self) -> Option<Token> {
-        loop {
-            match self.reader.read_byte() {
-                Err(error) => {
-                    self.done = true;
-                    return Some(Token::Eof);
-                },
-                Ok(byte) => {
-                    return Some(Token::Character);
-                }
+        if self.done {
+            return None;
+        }
+        
+        let token = match self.reader.read_byte() {
+            Err(error) => {
+                self.done = true;
+                Token::Eof
+            },
+            Ok(byte) => {
+               Token::Character
             }
-        }       
+        };
+        Some(token)
     }
 }
 
@@ -45,9 +48,6 @@ impl <'a>Iterator for Scanner<'a> {
     type Item = Token;
 
     fn next(&mut self) -> Option<Token> {
-        if self.done {
-            return None;
-        }
         self.get_next_token()
     }
 }
