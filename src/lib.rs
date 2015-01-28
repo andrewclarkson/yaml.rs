@@ -7,6 +7,8 @@
 
 use std::iter::Iterator;
 use std::option::Option;
+use std::io::IoResult;
+use self::Token::*;
 
 /// A Yaml Tokenizer
 ///
@@ -15,6 +17,9 @@ use std::option::Option;
 ///
 pub struct Tokenizer<'a> {
     reader: Box<Reader + 'a>,
+    buffer: Vec<u8>,
+    position: usize,
+    peek: usize,
     done: bool,
 }
 
@@ -22,16 +27,58 @@ impl <'a>Tokenizer<'a> {
     
     /// Creates a new Tokenizer from a Reader
     pub fn new<T: Reader + 'a>(reader: Box<T>) -> Tokenizer<'a> {
-        Tokenizer { reader: reader, done: false } 
+        Tokenizer { 
+            reader: reader, 
+            done: false, 
+            buffer: Vec::new(), 
+            position: 0,
+            peek: 0,
+        } 
     }
 
+    /// Gets the next byte
+    pub fn get_byte(&mut self) -> IoResult<u8> {
+        
+        // If the buffer is empty, fill it
+        if self.peek == self.buffer.len() {
+            match self.reader.read_byte() {
+                Ok(byte) => {
+                    self.buffer.push(byte);
+                    Ok(byte)
+                },
+                Err(error) => {
+                    Err(error)
+                }
+            }
+        } else {
+            Ok(self.buffer[self.peek])
+        }
+    }
+
+    pub fn peek(&mut self) -> IoResult<u8> {
+        let byte = self.get_byte();
+        match byte {
+            Ok(_) => { self.peek += 1 },
+            _ => {},
+        }
+        byte
+    }
+
+    pub fn advance(&mut self, number: usize) {
+        self.position += number;
+        self.peek = self.position;
+    }
+
+    /// Gets the next token in the stream
     pub fn get_next_token(&mut self) -> Option<Token> {
         if self.done {
             return None;
         }
         
-        let token = match self.reader.read_byte() {
-            Err(error) => {
+        let token = match self.peek() {
+            
+            // TODO: Check error value
+            Err(_) => {
                 self.done = true;
                 Token::Eof
             },
@@ -39,33 +86,79 @@ impl <'a>Tokenizer<'a> {
                 match byte as char {
                     
                     // Indicators:
-                    '[' => Token::SequenceStart,
-                    ']' => Token::SequenceEnd,
-                    '{' => Token::MappingStart,
-                    '}' => Token::MappingEnd,
-                    // TODO: peek ahead to check for a document opening
-                    '-' => Token::SequenceEntry,
-                    ':' => Token::MappingSeparator,
-                    ',' => Token::CollectionSeparator,
-                    '?' => Token::ComplexKey,
-                    '!' => Token::Tag,
-                    '&' => Token::Anchor,
-                    '*' => Token::Alias,
-                    '|' => Token::Literal,
-                    '>' => Token::Folded,
-                    '\'' => Token::SingleQuote,
-                    '"' => Token::DoubleQuote,
-                    '#' => Token::Comment,
-                    '%' => Token::Directive,
-                    '@' | '`' => Token::Reserved,
-                    _ => Token::Other,
+                    '[' => {
+                        self.advance(1);
+                        SequenceStart
+                    },
+                    ']' => {
+                        self.advance(1);
+                        SequenceEnd
+                    },
+                    '{' => {
+                        self.advance(1);
+                        MappingStart
+                    },
+                    '}' =>  {
+                        self.advance(1);
+                        MappingEnd
+                    },
+                    '-' => {
+                        if self.check_document_start() {
+                            self.advance(3);
+                            DocumentStart
+                        } else {
+                            self.advance(1);
+                            SequenceEntry
+                        }
+                    },
+                    '.' => {
+                        if self.check_document_end() {
+                            self.advance(3);
+                            DocumentEnd
+                        } else {
+                            Other
+                        }
+                    },
+                    ':' => MappingSeparator,
+                    ',' => CollectionSeparator,
+                    '?' => ComplexKey,
+                    '!' => Tag,
+                    '&' => Anchor,
+                    '*' => Alias,
+                    '|' => Literal,
+                    '>' => Folded,
+                    '\'' => SingleQuote,
+                    '"' => DoubleQuote,
+                    '#' => Comment,
+                    '%' => Directive,
+                    '@' | '`' => Reserved,
+                    _ => Other,
                 }
             }
         };
 
         Some(token)
     }
+
+    fn check_document_start(&mut self) -> bool {
+        match (self.peek(), self.peek()) {
+            (Ok(byte1), Ok(byte2)) => {
+                byte1 as char == '-' && byte2 as char == '-'
+            },
+            _ => false
+        }
+    } 
+    
+    fn check_document_end(&mut self) -> bool {
+        match (self.peek(), self.peek()) {
+            (Ok(byte1), Ok(byte2)) => {
+                byte1 as char == '.' && byte2 as char == '.'
+            },
+            _ => false
+        }
+    } 
 }
+
 
 /// All the types of tokens
 ///
@@ -146,18 +239,26 @@ pub enum Token {
     /// `c-reserved` in the spec
     Reserved,
 
+    ///TODO Documentation
+    ///
+    DocumentStart,
+
+    ///TODO: Documentation
+    ///
+    DocumentEnd,
+
     /// ``: a line break with no specific purpose
     LineBreakGeneric,
 
     /// ``
-    LineBreak(LineBreak),
+    LineBreak(LineBreakType),
 
     Other, // A temporary addition for unimplemented tokens
     Eof,
 }
 
 #[derive(PartialEq, Copy, Debug)]
-pub enum LineBreak {
+pub enum LineBreakType {
     Generic,
     LineSeparator,
     ParagraphSeparator
@@ -179,14 +280,15 @@ mod test {
     use std::vec;
 
     use super::{Tokenizer, Token};
+    use super::Token::*;
 
     #[test]
     fn test_scanner() {
-        let stream = "[";
+        let stream = "---[]-...";
         let mut reader = MemReader::new(stream.bytes().collect());
         let mut tokenizer = Tokenizer::new(Box::new(reader));
         let tokens: Vec<Token> = tokenizer.collect();
-        let expected = vec!(Token::SequenceStart, Token::Eof);
-        assert!(tokens == expected);
+
+        assert!(tokens == vec![DocumentStart, SequenceStart, SequenceEnd, SequenceEntry, DocumentEnd, Eof]);
     }
 }
