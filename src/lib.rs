@@ -7,7 +7,8 @@
 
 use std::iter::Iterator;
 use std::option::Option;
-use std::io::IoResult;
+use std::io::{IoResult, MemReader};
+use std::borrow::Cow;
 use self::Token::*;
 
 /// A Yaml Tokenizer
@@ -17,10 +18,7 @@ use self::Token::*;
 ///
 pub struct Tokenizer<'a> {
     reader: Box<Reader + 'a>,
-    buffer: Vec<u8>,
-    position: usize,
-    peek: usize,
-    done: bool,
+    stack: Vec<u8>,
 }
 
 impl <'a>Tokenizer<'a> {
@@ -29,134 +27,90 @@ impl <'a>Tokenizer<'a> {
     pub fn new<T: Reader + 'a>(reader: Box<T>) -> Tokenizer<'a> {
         Tokenizer { 
             reader: reader, 
-            done: false, 
-            buffer: Vec::new(), 
-            position: 0,
-            peek: 0,
+            stack: Vec::new(), 
         } 
     }
 
-    /// Gets the next byte
-    pub fn get_byte(&mut self) -> IoResult<u8> {
-        
-        // If the buffer is empty, fill it
-        if self.peek == self.buffer.len() {
-            match self.reader.read_byte() {
-                Ok(byte) => {
-                    self.buffer.push(byte);
-                    Ok(byte)
-                },
-                Err(error) => {
-                    Err(error)
-                }
-            }
+    fn read_char(&mut self) -> Option<char> {
+        match self.reader.read_byte() {
+            Ok(byte) => Some(byte as char),
+            Err(_) => None,
+        }
+    }
+
+    pub fn pop(&mut self) -> Option<char> {
+        if(self.stack.len() == 0) {
+            self.read_char()
         } else {
-            Ok(self.buffer[self.peek])
+            match self.stack.pop() {
+                Some(byte) => Some(byte as char),
+                None => None,
+            }
         }
     }
 
-    pub fn peek(&mut self) -> IoResult<u8> {
-        let byte = self.get_byte();
-        match byte {
-            Ok(_) => { self.peek += 1 },
-            _ => {},
-        }
-        byte
-    }
-
-    pub fn advance(&mut self, number: usize) {
-        self.position += number;
-        self.peek = self.position;
-    }
-
-    /// Gets the next token in the stream
-    pub fn get_next_token(&mut self) -> Option<Token> {
-        if self.done {
-            return None;
-        }
-        
-        let token = match self.peek() {
-            
-            // TODO: Check error value
-            Err(_) => {
-                self.done = true;
-                Token::Eof
+    pub fn next_token(&mut self) -> Option<Token> {
+        match self.pop() {
+            Some(character) => match character {
+                '-' => {
+                    if self.consume("--") {
+                        Some(DocumentStart)
+                    } else {
+                        Some(SequenceEntry)  
+                    }
+                },
+                _ => {
+                    self.stack.push(character as u8);
+                    self.consume_scalar()
+                },
             },
-            Ok(byte) => {
-                match byte as char {
-                    
-                    // Indicators:
-                    '[' => {
-                        self.advance(1);
-                        SequenceStart
+            None => None,
+        }
+    }
+
+    fn consume_scalar(&mut self) -> Option<Token> {
+        let mut eaten = Vec::new();
+        loop {
+            match self.pop() {
+                Some(character) => match character {
+                    'A'...'Z'|'a'...'z'|'0'...'9' => {
+                        eaten.push(character as u8);
                     },
-                    ']' => {
-                        self.advance(1);
-                        SequenceEnd
+                    _ => {
+                        self.stack.push(character as u8);
+                        break;
                     },
-                    '{' => {
-                        self.advance(1);
-                        MappingStart
-                    },
-                    '}' =>  {
-                        self.advance(1);
-                        MappingEnd
-                    },
-                    '-' => {
-                        if self.check_document_start() {
-                            self.advance(3);
-                            DocumentStart
-                        } else {
-                            self.advance(1);
-                            SequenceEntry
-                        }
-                    },
-                    '.' => {
-                        if self.check_document_end() {
-                            self.advance(3);
-                            DocumentEnd
-                        } else {
-                            Other
-                        }
-                    },
-                    ':' => MappingSeparator,
-                    ',' => CollectionSeparator,
-                    '?' => ComplexKey,
-                    '!' => Tag,
-                    '&' => Anchor,
-                    '*' => Alias,
-                    '|' => Literal,
-                    '>' => Folded,
-                    '\'' => SingleQuote,
-                    '"' => DoubleQuote,
-                    '#' => Comment,
-                    '%' => Directive,
-                    '@' | '`' => Reserved,
-                    _ => Other,
+                },
+                None => { 
+                    break;
                 }
             }
-        };
+        }
 
-        Some(token)
+        match String::from_utf8(eaten) {
+            Ok(string) => Some(Scalar(string)),
+            Err(_) => None,
+        }
     }
 
-    fn check_document_start(&mut self) -> bool {
-        match (self.peek(), self.peek()) {
-            (Ok(byte1), Ok(byte2)) => {
-                byte1 as char == '-' && byte2 as char == '-'
-            },
-            _ => false
+    fn consume(&mut self, edible: &'static str) -> bool {
+        let mut eaten = Vec::new();
+        for expected in edible.chars() {
+            let character = self.pop();
+            if character.is_some() {
+                let c = character.unwrap();
+                eaten.push(c as u8);
+                if c == expected {
+                    continue;
+                }
+            }
+            for ate in eaten.drain().rev() {
+                self.stack.push(ate);
+            } 
+            return false;
         }
-    } 
-    
-    fn check_document_end(&mut self) -> bool {
-        match (self.peek(), self.peek()) {
-            (Ok(byte1), Ok(byte2)) => {
-                byte1 as char == '.' && byte2 as char == '.'
-            },
-            _ => false
-        }
-    } 
+        true
+    }
 }
 
 
@@ -164,7 +118,7 @@ impl <'a>Tokenizer<'a> {
 ///
 /// Describes all of the token types described by the [Yaml 1.0 Spec](http://yaml.org/spec/1.0/)
 ///
-#[derive(PartialEq, Copy, Debug)]
+#[derive(PartialEq, Debug)]
 pub enum Token {
 
     /// `[`: the start of a _flow_ sequence
@@ -205,7 +159,7 @@ pub enum Token {
 
     /// `&`: indicates an anchor property (e.g setting a variable)
     /// `c-anchor` in the spec
-    Anchor,
+    Anchor(String),
 
     /// `*`: indicates an anchor property (e.g using a variable)
     /// `c-alias` in the spec
@@ -254,6 +208,7 @@ pub enum Token {
     LineBreak(LineBreakType),
 
     Other, // A temporary addition for unimplemented tokens
+    Scalar(String),
     Eof,
 }
 
@@ -269,26 +224,16 @@ impl <'a>Iterator for Tokenizer<'a> {
     type Item = Token;
 
     fn next(&mut self) -> Option<Token> {
-        self.get_next_token()
+        self.next_token()
     }
 }
 
 
-mod test {
-    
-    use std::io::MemReader;
-    use std::vec;
-
-    use super::{Tokenizer, Token};
-    use super::Token::*;
-
-    #[test]
-    fn test_scanner() {
-        let stream = "---[]-...";
-        let mut reader = MemReader::new(stream.bytes().collect());
-        let mut tokenizer = Tokenizer::new(Box::new(reader));
-        let tokens: Vec<Token> = tokenizer.collect();
-
-        assert!(tokens == vec![DocumentStart, SequenceStart, SequenceEnd, SequenceEntry, DocumentEnd, Eof]);
-    }
+fn main() {
+    let stream = "--hallo";
+    let mut reader = MemReader::new(stream.bytes().collect());
+    let mut tokenizer = Tokenizer::new(Box::new(reader));
+    let tokens: Vec<Token> = tokenizer.collect();
+    println!("{:?}", tokens);
 }
+
