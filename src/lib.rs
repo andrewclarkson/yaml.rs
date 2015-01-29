@@ -52,6 +52,11 @@ impl <'a>Tokenizer<'a> {
     pub fn next_token(&mut self) -> Option<Token> {
         match self.pop() {
             Some(character) => match character {
+                // TODO: factor out Some(Token)
+                '[' => Some(SequenceStart),
+                ']' => Some(SequenceEnd),
+                '{' => Some(MappingStart),
+                '}' => Some(MappingEnd),
                 '-' => {
                     if self.consume("--") {
                         Some(DocumentStart)
@@ -59,6 +64,38 @@ impl <'a>Tokenizer<'a> {
                         Some(SequenceEntry)  
                     }
                 },
+                ':' => Some(MappingSeparator),
+                ',' => Some(CollectionSeparator),
+                '?' => Some(ComplexKey),
+                '!' => Some(Tag),
+                '&' => {
+                    match self.consume_anchor() {
+                        Some(string) => Some(Anchor(string)),
+                        None => None,
+                    }
+                },
+                '*' => {
+                    match self.consume_anchor() {
+                        Some(string) => Some(Alias(string)),
+                        None => None,
+                    }
+                },
+                '#' => {
+                    self.throw_away_comment();
+                    self.next_token()
+                },
+                '\'' => Some(SingleQuote),
+                '"' => Some(DoubleQuote),
+                '|' => Some(Literal),
+                '>' => Some(Folded),
+                '.' => {
+                    if self.consume("..") {
+                        Some(DocumentEnd)
+                    } else {
+                        self.stack.push(character as u8);
+                        self.consume_scalar()
+                    }
+                }
                 _ => {
                     self.stack.push(character as u8);
                     self.consume_scalar()
@@ -66,6 +103,46 @@ impl <'a>Tokenizer<'a> {
             },
             None => None,
         }
+    }
+
+    fn throw_away_comment(&mut self) {
+        loop {
+            match self.pop() {
+                Some(character) => match character {
+                    '\n' => { break },
+                    _ => { continue },
+                },
+                None => { 
+                    break;
+                }
+            }
+        }
+    }
+
+    fn consume_anchor(&mut self) -> Option<String> {
+        let mut eaten = Vec::new();
+        loop {
+            match self.pop() {
+                Some(character) => match character {
+                    'A'...'Z'|'a'...'z'|'0'...'9'|'-'|'_' => {
+                        eaten.push(character as u8);
+                    },
+                    _ => {
+                        self.stack.push(character as u8);
+                        break;
+                    },
+                },
+                None => { 
+                    break;
+                }
+            }
+        }
+        
+        match String::from_utf8(eaten) {
+            Ok(string) => Some(string),
+            Err(_) => None,
+        }
+           
     }
 
     fn consume_scalar(&mut self) -> Option<Token> {
@@ -163,7 +240,7 @@ pub enum Token {
 
     /// `*`: indicates an anchor property (e.g using a variable)
     /// `c-alias` in the spec
-    Alias,
+    Alias(String),
 
     /// `|`: indicates a literal value (not to be escaped)
     /// `c-literal` in the spec
