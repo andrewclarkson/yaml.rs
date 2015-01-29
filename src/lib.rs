@@ -229,11 +229,18 @@ impl <'a>Iterator for Tokenizer<'a> {
 }
 
 
-fn main() {
-    let stream = "--hallo";
-    let mut reader = MemReader::new(stream.bytes().collect());
-    let mut tokenizer = Tokenizer::new(Box::new(reader));
-    let tokens: Vec<Token> = tokenizer.collect();
-    println!("{:?}", tokens);
-}
+mod test {
 
+    use std::io::MemReader;
+    use super::{Tokenizer, Token};
+    use super::Token::*;
+
+    #[test]
+    fn test_tokens() {
+        let stream = "--hallo";
+        let mut reader = MemReader::new(stream.bytes().collect());
+        let mut tokenizer = Tokenizer::new(Box::new(reader));
+        let tokens: Vec<Token> = tokenizer.collect();
+        assert!(tokens == vec![SequenceEntry, SequenceEntry, Scalar("hallo".to_string())]);
+    }
+}
