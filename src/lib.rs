@@ -95,6 +95,13 @@ impl <'a>Tokenizer<'a> {
                         self.stack.push(character as u8);
                         self.consume_scalar()
                     }
+                },
+                '%' => self.consume_directive(),
+                // TODO: do more with whitespace than just
+                // throw it out!
+                '\n' | ' ' | '\t' => {
+                    self.throw_away_whitespace();
+                    self.next_token()
                 }
                 _ => {
                     self.stack.push(character as u8);
@@ -103,6 +110,25 @@ impl <'a>Tokenizer<'a> {
             },
             None => None,
         }
+    }
+
+    fn throw_away_whitespace(&mut self) {
+        loop {
+            match self.pop() {
+                Some(character) => match character {
+                    '\n' | ' ' | '\t' => { continue },
+                    _ => { 
+                        //TODO: factor out "as u8" on the push
+                        self.stack.push(character as u8);
+                        break;
+                    },
+                },
+                None => { 
+                    break;
+                }
+            }
+        }
+        
     }
 
     fn throw_away_comment(&mut self) {
@@ -117,6 +143,62 @@ impl <'a>Tokenizer<'a> {
                 }
             }
         }
+    }
+
+    fn consume_directive(&mut self) -> Option<Token> {
+        if self.consume("YAML ") {
+            match self.consume_yaml_version() {
+                Some(version) => Some(YamlDirective(version)),
+                None => None,
+            }
+
+        // TODO: Other types of directives
+        } else {
+            None
+        }
+    }
+
+    fn consume_yaml_version(&mut self) -> Option<YamlVersion> {
+        let major = match self.consume_number() {
+            Some(number) => number,
+            None => { return None },
+        };
+        if !self.consume(".") {
+            return None;        
+        }
+        let minor = match self.consume_number() {
+            Some(number) => number,
+            None => { return None },
+        };
+        Some(YamlVersion {major: major, minor: minor})
+    }
+
+    fn consume_number(&mut self) -> Option<usize> {
+        let mut accumulator: Option<usize> = None;
+        loop {
+            match self.pop() {
+                Some(character) => match character {
+                    '0' ... '9' => {
+                        let digit: usize = character as usize - '0' as usize;
+                        match accumulator {
+                            Some(mut a) => {
+                                a *= 10;
+                                a += digit;
+                            }
+                            None => {
+                                accumulator = Some(digit);
+                            }
+                        }
+                    },
+                    _ => {
+                        self.stack.push(character as u8);
+                        break;
+                    }
+                },
+                None => { return None },
+            }
+        }
+        accumulator
     }
 
     fn consume_anchor(&mut self) -> Option<String> {
@@ -262,9 +344,13 @@ pub enum Token {
     /// `c-throwaway`
     Comment,
 
-    /// `%`: a directive (tags for the YAML parser)
+    /// `%YAML <version>`: a yaml version directive (tags for the YAML parser)
     /// `c-directive` in the spec
-    Directive,
+    YamlDirective(YamlVersion),
+
+    /// TODO: `%<NAME> <param>*`: a directive yet to be implemented
+    /// ``
+    /// ReservedDirective(String, Vec<String>)
 
     /// `@ | \``: reserved for future use?
     /// `c-reserved` in the spec
@@ -287,6 +373,12 @@ pub enum Token {
     Other, // A temporary addition for unimplemented tokens
     Scalar(String),
     Eof,
+}
+
+#[derive(PartialEq, Eq, Debug)]
+pub struct YamlVersion {
+    major: usize,
+    minor: usize,
 }
 
 #[derive(PartialEq, Copy, Debug)]
@@ -313,11 +405,28 @@ mod test {
     use super::Token::*;
 
     #[test]
-    fn test_tokens() {
+    fn test_look_ahead() {
         let stream = "--hallo";
         let mut reader = MemReader::new(stream.bytes().collect());
         let mut tokenizer = Tokenizer::new(Box::new(reader));
         let tokens: Vec<Token> = tokenizer.collect();
         assert!(tokens == vec![SequenceEntry, SequenceEntry, Scalar("hallo".to_string())]);
+    }
+
+    #[test]
+    fn test_document() {
+        let stream = "---\n    - hallo\n    - yolo\n...";
+        let mut reader = MemReader::new(stream.bytes().collect());
+        let mut tokenizer = Tokenizer::new(Box::new(reader));
+        let tokens: Vec<Token> = tokenizer.collect();
+        assert!(tokens == vec![
+                DocumentStart, 
+                SequenceEntry, 
+                Scalar("hallo".to_string()),
+                SequenceEntry, 
+                Scalar("yolo".to_string()),
+                DocumentEnd
+        ]);
+        
     }
 }
