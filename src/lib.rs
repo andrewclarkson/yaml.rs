@@ -31,16 +31,25 @@ impl <'a>Tokenizer<'a> {
         } 
     }
 
-    fn read_char(&mut self) -> Option<char> {
+    /// Reads a byte from the reader an returns it as a char
+    /// TODO: Error Handling
+    fn read_character(&mut self) -> Option<char> {
         match self.reader.read_byte() {
             Ok(byte) => Some(byte as char),
             Err(_) => None,
         }
     }
 
-    pub fn pop(&mut self) -> Option<char> {
+    /// Pops a character off of the internal buffer (stack)
+    /// or if the stack is empty it reads a new character
+    fn pop(&mut self) -> Option<char> {
+        // if we have consumed all of the characters
+        // in the buffer, just read one
         if(self.stack.len() == 0) {
-            self.read_char()
+            self.read_character()
+
+        // if we have characters that something has puked back,
+        // use those.
         } else {
             match self.stack.pop() {
                 Some(byte) => Some(byte as char),
@@ -49,7 +58,10 @@ impl <'a>Tokenizer<'a> {
         }
     }
 
+    /// Gets the next token, useful for iterating
+    /// TODO: Error handling
     pub fn next_token(&mut self) -> Option<Token> {
+        
         match self.pop() {
             Some(character) => match character {
                 // TODO: factor out Some(Token)
@@ -71,13 +83,15 @@ impl <'a>Tokenizer<'a> {
                 '&' => {
                     match self.consume_anchor() {
                         Some(string) => Some(Anchor(string)),
-                        None => None,
+                        //TODO: should this be an error?
+                        None => Anchor(String::new()),
                     }
                 },
                 '*' => {
                     match self.consume_anchor() {
                         Some(string) => Some(Alias(string)),
-                        None => None,
+                        //TODO: should this be an error?
+                        None => Alias(String::new()),
                     }
                 },
                 '#' => {
@@ -89,9 +103,11 @@ impl <'a>Tokenizer<'a> {
                 '|' => Some(Literal),
                 '>' => Some(Folded),
                 '.' => {
+                    // Attempt to consume '..'
                     if self.consume("..") {
                         Some(DocumentEnd)
                     } else {
+                        // Puke the '.' and try again as a scalar
                         self.stack.push(character as u8);
                         self.consume_scalar()
                     }
@@ -117,6 +133,8 @@ impl <'a>Tokenizer<'a> {
             match self.pop() {
                 Some(character) => match character {
                     '\n' | ' ' | '\t' => { continue },
+                    // If we found a non-whitespace character,
+                    // put it back on the stack
                     _ => { 
                         //TODO: factor out "as u8" on the push
                         self.stack.push(character as u8);
